@@ -2,11 +2,47 @@ package main
 
 import (
   "fmt"
-  "strconv"
 	"database/sql"
+  "encoding/json"
+  "net/http"
+  "html/template"
+  "io/ioutil"
+  "time"
 	_ "github.com/mattn/go-sqlite3"
 )
  var db  *sql.DB
+
+type Thread struct{
+  Board string
+  ThreadNum string
+  Sticky string
+  PostCount int
+  Subject string
+  Date string
+  Old int
+  Replies []Post
+}
+type Post struct{
+  PostNum int
+  Name string
+  Date string
+  Image string
+  Thumb string
+  IName string
+  Size string
+  Comment string
+  SubPosts []SubPost
+}
+type SubPost struct{
+  Name string
+  Date string
+  Comment string
+  PostNum int
+}
+
+type Inputs struct{
+  Time string
+}
 
 func main(){
   db_init, err := sql.Open("sqlite3", "/home/ecverniy/Desktop/4t2/github/db/shitaba.db")
@@ -15,113 +51,164 @@ func main(){
     panic(err)
   }
 
+  //init
+  http.HandleFunc("/", generateRootForm)
+  http.HandleFunc("/get", returnThreadSave)
+  http.ListenAndServe(":8080", nil)
 
-  thread, posts, subposts := getThread("1", "a")
-  fmt.Println("thread", thread)
-  fmt.Println("---")
-  fmt.Println("posts", posts)
-  fmt.Println("---")
-  fmt.Println("subposts", subposts)
 }
 
-func getThread(thread string, board string) (map[string]string , []map[string]string , []map[string]string){
-  thread_map := make(map[string]string)
-  thread_props, err := db.Query(`SELECT sticky, postcount, subject, date, old FROM threads
+func generateRootForm(w http.ResponseWriter, r *http.Request){
+  input_tmpl_str, err := ioutil.ReadFile("./inputs.template")
+  if err != nil {
+    panic(err)
+  }
+  inputs_tmpl, err := template.New("inputs").Parse(string (input_tmpl_str))
+  if err != nil {
+    panic(err)
+  }
+  inputs := Inputs{time.Now().Format("Mon Jan _2 15:04:05 2006")}
+  err = inputs_tmpl.ExecuteTemplate(w,"inputs", inputs)
+  if err != nil {
+    panic(err)
+  }
+}
+
+func returnThreadSave(w http.ResponseWriter, r *http.Request){
+  thread_arr := r.URL.Query()["thread"]
+  var thread string
+  if thread_arr != nil{
+    thread = thread_arr[0]
+  }
+  board_arr := r.URL.Query()["board"]
+  var board string
+  if board_arr != nil{
+    board = board_arr[0]
+  }
+  threads := getThread(thread, board)
+  json, err := json.Marshal(threads)
+  if err != nil{
+    panic(err)
+  }
+  fmt.Fprintf(w, string (json))
+}
+
+func getThread(thread string, board string) (Thread){
+  thread_struct := Thread{}
+  thread_props, err := db.Query(`SELECT sticky, postcount, subject, Date, old FROM threads
     WHERE board=? AND threadnum=?`, board, thread)
   if err != nil {
     panic(err)
   }
-  thread_map["board"] = board
-  thread_map["threadnum"] = thread
+  thread_struct.Board = board
+  thread_struct.ThreadNum = thread
   for thread_props.Next(){
     var sticky sql.NullString
     var postcount sql.NullInt64
     var subject sql.NullString
-    var date sql.NullString
+    var Date sql.NullString
     var old sql.NullInt64
-    err = thread_props.Scan(&sticky, &postcount, &subject, &date, &old)
+    err = thread_props.Scan(&sticky, &postcount, &subject, &Date, &old)
     if err != nil {
       panic(err)
     }
     if sticky.Valid{
-      thread_map["sticky"] = sticky.String
-    }else{
-      thread_map["sticky"] = ""
+      thread_struct.Sticky = sticky.String
     }
     if postcount.Valid{
-      thread_map["postcount"] = strconv.Itoa(int (postcount.Int64))
-    }else{
-      thread_map["postcount"] = ""
+      thread_struct.PostCount = int (postcount.Int64)
     }
     if subject.Valid{
-      thread_map["subject"] = subject.String
-    }else{
-      thread_map["subject"] = ""
+      thread_struct.Subject = subject.String
     }
-    if date.Valid{
-      thread_map["date"] = date.String
-    }else{
-      thread_map["date"] = ""
+    if Date.Valid{
+      thread_struct.Date = Date.String
     }
     if old.Valid{
-      thread_map["old"] = strconv.Itoa(int (old.Int64))
-    }else{
-      thread_map["old"] = ""
+      thread_struct.Old = int (old.Int64)
     }
   }
 
-  var post_arr []map[string]string;
-  post_props, err := db.Query(`SELECT postnum, name, date, image, thumb,iname, size, comment
+  var post_arr []Post;
+  post_props, err := db.Query(`SELECT PostNum, Name, Date, Image, Thumb,IName, Size, Comment
     FROM posts WHERE board=? AND threadnum=?`, board, thread)
   if err != nil {
     panic(err)
   }
   for post_props.Next(){
-    var post_map = make(map[string]string)
-    var postnum int
-    var name string
-    var date string
-    var image string
-    var thumb string
-    var iname string
-    var size string
-    var comment string
-    err = post_props.Scan(&postnum, &name, &date, &image, &thumb, &iname, &size, &comment)
+    post_struct := Post{}
+    var PostNum sql.NullInt64
+    var Name sql.NullString
+    var Date sql.NullString
+    var Image sql.NullString
+    var Thumb sql.NullString
+    var IName sql.NullString
+    var Size sql.NullString
+    var Comment sql.NullString
+    err = post_props.Scan(&PostNum, &Name, &Date, &Image, &Thumb, &IName, &Size, &Comment)
     if err != nil {
       panic(err)
     }
-    post_map["postnum"] = strconv.Itoa(postnum)
-    post_map["name"] = name
-    post_map["date"] = date
-    post_map["image"] = image
-    post_map["thumb"] = thumb
-    post_map["iname"] = iname
-    post_map["size"] = size
-    post_map["comment"] = comment
-    post_arr = append(post_arr, post_map)
+
+    if PostNum.Valid{
+      post_struct.PostNum = int (PostNum.Int64)
+    }
+    if Name.Valid{
+      post_struct.Name = Name.String
+    }
+    if Date.Valid{
+      post_struct.Date = Date.String
+    }
+    if Image.Valid{
+      post_struct.Image = Image.String
+    }
+    if Thumb.Valid{
+      post_struct.Thumb = Thumb.String
+    }
+    if IName.Valid{
+      post_struct.IName = IName.String
+    }
+    if Size.Valid{
+      post_struct.Size = Size.String
+    }
+    if Comment.Valid{
+      post_struct.Comment = Comment.String
+    }
+    post_arr = append(post_arr, post_struct)
   }
 
-  var subpost_arr []map[string]string;
-  subpost_props, err := db.Query("SELECT name, date, comment FROM subposts WHERE board=? AND threadnum=?", board, thread)
+  var subpost_arr []SubPost;
+  subpost_props, err := db.Query("SELECT Name, Date, Comment, PostNum FROM SubPosts WHERE board=? AND threadnum=?", board, thread)
   if err != nil {
     panic(err)
   }
   for subpost_props.Next(){
-    var subpost_map = make(map[string]string)
-    var name string
-    var date string
-    var comment string
-    err = subpost_props.Scan(&name, &date, &comment)
+    subpost_struct := SubPost{}
+    var Name string
+    var Date string
+    var Comment string
+    var PostNum int
+    err = subpost_props.Scan(&Name, &Date, &Comment, &PostNum)
     if err != nil {
       panic(err)
     }
-    subpost_map["name"] = name;
-    subpost_map["date"] = date;
-    subpost_map["comment"] = comment;
-    subpost_arr = append(subpost_arr, subpost_map)
+    subpost_struct.Name = Name;
+    subpost_struct.Date = Date;
+    subpost_struct.Comment = Comment;
+    subpost_struct.PostNum = PostNum;
+    subpost_arr = append(subpost_arr, subpost_struct)
   }
 
+  for subpost_no := 0 ; subpost_no < len(subpost_arr) ; subpost_no++{
+    for post_no := 0; post_no < len(post_arr) ; post_no++{
+      if subpost_arr[subpost_no].PostNum == post_arr[post_no].PostNum{
+        post_arr[post_no].SubPosts = append(post_arr[post_no].SubPosts, subpost_arr[subpost_no])
+      }
+    }
+  }
 
-  return thread_map, post_arr, subpost_arr
+  thread_struct.Replies = post_arr
+
+  return thread_struct
 
   }
