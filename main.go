@@ -2,12 +2,19 @@ package main
 
 import (
   "fmt"
-	"database/sql"
+  "bytes"
+  "strings"
+  "time"
+  "os"
+  "io"
   "encoding/json"
   "net/http"
   "html/template"
   "io/ioutil"
-  "time"
+  "path/filepath"
+  "archive/tar"
+  "compress/gzip"
+  "database/sql"
 	_ "github.com/mattn/go-sqlite3"
 )
  var db  *sql.DB
@@ -41,6 +48,7 @@ type SubPost struct{
 }
 
 type Inputs struct{
+  Unix int64
   Time string
 }
 
@@ -52,10 +60,19 @@ func main(){
   }
 
   //init
-  http.HandleFunc("/", generateRootForm)
-  http.HandleFunc("/get", returnThreadSave)
+  http.HandleFunc("/", router)
   http.ListenAndServe(":8080", nil)
 
+}
+
+func router(w http.ResponseWriter, r *http.Request){
+  if r.URL.Path == "/" {
+    generateRootForm(w,r)
+  } else if strings.Contains(r.URL.Path, ".tar.gz"){
+    returnThreadSave(w,r)
+  } else{
+    generateRootForm(w,r)
+  }
 }
 
 func generateRootForm(w http.ResponseWriter, r *http.Request){
@@ -67,7 +84,7 @@ func generateRootForm(w http.ResponseWriter, r *http.Request){
   if err != nil {
     panic(err)
   }
-  inputs := Inputs{time.Now().Format("Mon Jan _2 15:04:05 2006")}
+  inputs := Inputs{time.Now().Unix(), time.Now().Format("Mon Jan _2 15:04:05 2006")}
   err = inputs_tmpl.ExecuteTemplate(w,"inputs", inputs)
   if err != nil {
     panic(err)
@@ -77,20 +94,70 @@ func generateRootForm(w http.ResponseWriter, r *http.Request){
 func returnThreadSave(w http.ResponseWriter, r *http.Request){
   thread_arr := r.URL.Query()["thread"]
   var thread string
-  if thread_arr != nil{
+  if thread_arr != nil && thread_arr[0] != ""{
     thread = thread_arr[0]
+  }else{
+    fmt.Fprintf(w, "Thread Missing")
+    return
   }
   board_arr := r.URL.Query()["board"]
   var board string
-  if board_arr != nil{
+  if board_arr != nil && board_arr[0] != ""{
     board = board_arr[0]
+  }else{
+    fmt.Fprintf(w, "Board Missing")
+    return
   }
   threads := getThread(thread, board)
+  if len(threads.Replies) == 0 {
+    fmt.Fprintf(w, "Null Thread")
+    return
+  }
+  threadToTarGz(w, threads)
+}
+
+func threadToTarGz(w http.ResponseWriter, threads Thread){
   json, err := json.Marshal(threads)
   if err != nil{
     panic(err)
   }
-  fmt.Fprintf(w, string (json))
+  w.Header().Set("content-type", "application/gzip")
+  json_str :=  string (json)
+
+  var binary_buffer bytes.Buffer
+
+  gw := gzip.NewWriter(&binary_buffer)
+  tw := tar.NewWriter(gw)
+
+  tar_head := new(tar.Header)
+  tar_head.Name = threads.ThreadNum + "-" + threads.Board+".json"
+  tar_head.Mode = int64(0644)
+  tar_head.Size = int64(len(json_str))
+
+  tw.WriteHeader(tar_head)
+  tw.Write([]byte(json_str))
+
+  filepath.Walk("/home/ecverniy/Desktop/4t2/github/pub/img/" + threads.Board + "/" + threads.ThreadNum + "/", func(file string, fi os.FileInfo, err error) error{
+    tar_head, _ := tar.FileInfoHeader(fi, file)
+    tar_head.Name = filepath.ToSlash(strings.Replace(file, "/home/ecverniy/Desktop/4t2/github/pub", "",-1))
+    tar_head.Mode = int64(0644)
+    tw.WriteHeader(tar_head)
+		if !fi.IsDir() {
+			image_data, err := os.Open(file)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(tw, image_data); err != nil {
+				return err
+			}
+		}
+    return nil
+  })
+
+  tw.Close()
+  gw.Close()
+
+  w.Write(binary_buffer.Bytes())
 }
 
 func getThread(thread string, board string) (Thread){

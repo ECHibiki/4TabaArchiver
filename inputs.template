@@ -1,20 +1,22 @@
 <html>
   <head>
+    <title>4Taba Archiver</title>
     <link rel="stylesheet" href="https://4taba2.net/pub/css/multi-theme.css">
   </head>
   <body style="margin:18px;">
     <strong>
       Type in a board(no slashes) and thread to save.
       <br/>
-      A *.zip file will be returned containing JSON data along with Thumbs, Images and Files
+      A *.tar.gz file will be returned containing JSON data along with Thumbs, Images and Files
     </strong>
-    <form action='/get'>
+    <form action='/thread-archive-{{.Unix}}.tar.gz'>
       <input placeholder='board' Name='board' />
       <input placeholder='thread-no' Name='thread' />
       <br/>
       <input type='submit' />
     </form>
     <hr/>
+    Source: <a href="https://github.com/ECHibiki/4TabaArchiver">ECHibiki/4TabaArchiver</a><br/>
     {{.Time}}
   </body>
 </html>
